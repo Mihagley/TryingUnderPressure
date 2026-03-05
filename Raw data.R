@@ -1,5 +1,4 @@
-#Create raw dataset. 
-rm(list=ls())
+# Create raw dataset.
 # Load necessary libraries
 library(haven)
 library(dplyr)
@@ -9,6 +8,9 @@ library(data.table)
 # Set working directories
 source_dir <- "C:/Users/mhagley/Documents/Pairfam_data/Stata"
 save_dir <- gsub("\\\\", "/", "C:/Users/mhagley/Documents/Pairfam_data/save")
+if (!dir.exists(save_dir)) {
+  dir.create(save_dir, recursive = TRUE)
+}
 
 
 # List of  variables to retain
@@ -65,9 +67,16 @@ original_vars <- c(
 
 clean_and_select <- function(df, vars) {
   common_vars <- intersect(names(df), vars)
+  missing_vars <- setdiff(vars, names(df))
+  if (length(missing_vars) > 0) {
+    message(
+      "Missing variables in file: ",
+      paste(missing_vars, collapse = ", ")
+    )
+  }
   df %>%
     select(all_of(common_vars)) %>%
-    mutate(across(everything(), ~ as.vector(.)))
+    mutate(across(everything(), ~ as.vector(haven::zap_labels(.))))
 }
 
 # Load and merge all panel files while retaining only the original variables
@@ -75,10 +84,12 @@ files <- c("anchor1", "anchor1_DD", "anchor2", "anchor3", "anchor4", "anchor5",
            "anchor6", "anchor7", "anchor8", "anchor9", "anchor10", "anchor11", 
            "anchor12_capi", "anchor12_cati", "anchor13_capi", "anchor13_cati")
 
-panel_data <- lapply(files, function(file) {
+panel_data_list <- lapply(files, function(file) {
   df <- read_dta(file.path(source_dir, paste0(file, ".dta")))
   clean_and_select(df, original_vars)
-}) %>% bind_rows()
+})
+
+panel_data <- rbindlist(panel_data_list, use.names = TRUE, fill = TRUE)
 
 # Convert to data.table
 setDT(panel_data)
@@ -90,13 +101,12 @@ setorder(panel_data, id, wave)
 panel_data[, intdat := (inty - 1900) * 12 + intm]
 
 # Generate INTDAT
-
-
-
-panel_data[, INTDAT := max(intdat, na.rm = TRUE), by = id]
+panel_data[, INTDAT := {
+  if (all(is.na(intdat))) NA_real_ else max(intdat, na.rm = TRUE)
+}, by = id]
 
 # Generate DOB
 panel_data[, DOB := ((doby_gen - 1900) * 12 + dobm_gen) - 1]
 
-# Save the intermediate data as a data.table binary file
+# Save the intermediate data as a CSV file
 fwrite(panel_data, file.path(save_dir, "AnchorBICLATE_clean.csv"))
